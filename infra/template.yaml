@@ -1,0 +1,86 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Serverless MLOps loop - AutoML model served on Lambda + HTTP API, inference logs in S3,
+  scheduled multi-signal drift job, CloudWatch alarm -> SNS, retrain via GitHub Actions.
+  Deploy: sam build && sam deploy --guided  (see README "Cloud deployment").
+
+Parameters:
+  GitHubRepo:      {Type: String, Default: "", Description: "Optional owner/repo for GitHub Actions retraining; leave empty to retrain inside the drift Lambda"}
+  GitHubTokenParam: {Type: String, Default: mlops/github-token, Description: "SSM SecureString (name without leading slash) with a fine-grained PAT (Contents: read, Actions: write)"}
+  AlertEmail:      {Type: String}
+  DriftSchedule:   {Type: String, Default: rate(1 hour)}
+
+Globals:
+  Function:
+    Architectures: [x86_64]
+    MemorySize: 1024
+    Environment:
+      Variables:
+        MLOPS_BUCKET: !Ref ArtifactBucket
+        REFRESH_S: "30"
+
+Resources:
+  ArtifactBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration: [{ServerSideEncryptionByDefault: {SSEAlgorithm: AES256}}]
+      PublicAccessBlockConfiguration:
+        {BlockPublicAcls: true, BlockPublicPolicy: true, IgnorePublicAcls: true, RestrictPublicBuckets: true}
+      VersioningConfiguration: {Status: Enabled}       # model rollback = previous object version
+      LifecycleConfiguration:
+        Rules:
+          - {Id: expire-raw-logs, Prefix: logs/, Status: Enabled, ExpirationInDays: 30}
+          - {Id: old-versions, Status: Enabled, NoncurrentVersionExpiration: {NoncurrentDays: 30}}
+
+  PredictFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 30
+      ImageConfig: {Command: ["infra.lambda_handlers.api_handler"]}
+      Policies: [{S3CrudPolicy: {BucketName: !Ref ArtifactBucket}}]
+      Events:
+        Api: {Type: HttpApi, Properties: {Path: "/{proxy+}", Method: ANY}}
+    Metadata: {DockerTag: v1, DockerContext: .., Dockerfile: infra/Dockerfile}
+
+  DriftFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      PackageType: Image
+      Timeout: 600
+      MemorySize: 2048
+      ImageConfig: {Command: ["infra.lambda_handlers.drift_handler"]}
+      Environment:
+        Variables: {GITHUB_REPO: !Ref GitHubRepo, GITHUB_TOKEN_PARAM: !Sub "/${GitHubTokenParam}", WINDOW: "500"}
+      Policies:
+        - S3CrudPolicy: {BucketName: !Ref ArtifactBucket}
+        - CloudWatchPutMetricPolicy: {}
+        - SSMParameterReadPolicy: {ParameterName: !Ref GitHubTokenParam}
+      Events:
+        Schedule: {Type: Schedule, Properties: {Schedule: !Ref DriftSchedule}}
+    Metadata: {DockerTag: v1, DockerContext: .., Dockerfile: infra/Dockerfile}
+
+  AlertTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      Subscription: [{Protocol: email, Endpoint: !Ref AlertEmail}]
+
+  DriftAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Multi-signal drift engine requested a retrain
+      Namespace: MLOpsPipeline
+      MetricName: DriftAlarm
+      Statistic: Maximum
+      Period: 3600
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertTopic]
+
+Outputs:
+  ApiUrl: {Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"}
+  Bucket: {Value: !Ref ArtifactBucket}

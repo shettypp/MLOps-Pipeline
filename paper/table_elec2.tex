@@ -1,0 +1,19 @@
+\begin{table}[t]
+\caption{Elec2 stream, mean over 3 runs (82 windows of 500). Retrains and promotions are counts per run.}
+\label{tab:elec2}
+\centering\footnotesize\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccc}
+\toprule
+Strategy & Acc.\ (\%) & Worst win. & Retrains & Promoted \\
+\midrule
+No retraining & 67.8$\pm$0.6 & 51.1 & 0.0 & 0.0 \\
+Fixed (every 4 win) & 73.9$\pm$0.5 & 52.9 & 20.0 & 15.7 \\
+Fixed (every 10 win) & 73.4$\pm$0.6 & 53.8 & 8.0 & 5.0 \\
+KS-triggered & 74.7$\pm$0.4 & 56.3 & 28.0 & 21.7 \\
+PSI-triggered & 74.6$\pm$0.3 & 54.4 & 28.0 & 22.0 \\
+\textbf{Multi-signal (ours)} & 74.4$\pm$0.3 & 55.0 & 22.7 & 17.0 \\
+ErrorRate (labels)$^*$ & 73.3$\pm$0.6 & 56.4 & 17.3 & 14.0 \\
+\bottomrule
+\multicolumn{5}{l}{\scriptsize $^*$needs true labels at check time (supervised reference).}
+\end{tabular}
+\end{table}

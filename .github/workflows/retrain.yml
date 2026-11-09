@@ -1,0 +1,23 @@
+name: CT - drift-triggered retrain
+# Fired by the drift Lambda (repository_dispatch) or manually.
+# Retrains with warm-started AutoML on logged traffic, gates against the serving model,
+# and publishes a new version to the S3 registry; the API hot-swaps within REFRESH_S.
+on:
+  repository_dispatch: {types: [drift-retrain]}
+  workflow_dispatch:
+permissions: {id-token: write, contents: read}
+concurrency: {group: retrain, cancel-in-progress: false}
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+    env: {MLOPS_BUCKET: "${{ vars.MLOPS_BUCKET }}"}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: {python-version: "3.12", cache: pip}
+      - run: pip install -r requirements.txt boto3
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: {role-to-assume: "${{ secrets.AWS_ROLE_ARN }}", aws-region: "${{ vars.AWS_REGION || 'ap-south-1' }}"}
+      - id: rt
+        run: python -m src.pipeline retrain --budget 60 | tee retrain.json
+      - run: echo "### Retrain result" >> $GITHUB_STEP_SUMMARY && cat retrain.json >> $GITHUB_STEP_SUMMARY

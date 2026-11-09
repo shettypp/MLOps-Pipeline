@@ -1,0 +1,21 @@
+name: CD - deploy infrastructure
+# Code/infra changes on main -> build the Lambda image and deploy the SAM stack.
+# AWS access via GitHub OIDC (no long-lived keys): secret AWS_ROLE_ARN.
+on:
+  push: {branches: [main]}
+  workflow_dispatch:
+permissions: {id-token: write, contents: read}
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with: {role-to-assume: "${{ secrets.AWS_ROLE_ARN }}", aws-region: "${{ vars.AWS_REGION || 'ap-south-1' }}"}
+      - uses: aws-actions/setup-sam@v2
+      - run: sam build -t infra/template.yaml
+      - run: >
+          sam deploy --stack-name mlops-pipeline --resolve-s3 --resolve-image-repos
+          --capabilities CAPABILITY_IAM --no-confirm-changeset --no-fail-on-empty-changeset
+          --parameter-overrides GitHubRepo=${{ github.repository }} AlertEmail=${{ vars.ALERT_EMAIL }}
